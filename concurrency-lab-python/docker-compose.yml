@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: concurrency_lab
+      POSTGRES_USER: lab_user
+      POSTGRES_PASSWORD: lab_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lab_user -d concurrency_lab"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  db-init:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: lab_password
+    volumes:
+      - ./db:/sql:ro
+    command: >
+      sh -c "
+      psql -h postgres -U lab_user -d concurrency_lab -v ON_ERROR_STOP=1 -f /sql/init.sql
+      "
+
+  worker:
+    build:
+      context: ./worker
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: concurrency_lab
+      DB_USER: lab_user
+      DB_PASSWORD: lab_password
+      SHARED_LOG_FILE: /shared/worker-log.txt
+    volumes:
+      - shared-data:/shared
+    restart: "no"
+
+  logs-reader:
+    image: alpine:3.20
+    profiles:
+      - tools
+    volumes:
+      - shared-data:/shared
+    command: >
+      sh -c "
+      echo '--- Shared log file ---';
+      cat /shared/worker-log.txt 2>/dev/null || echo 'No log file found yet.'
+      "
+
+volumes:
+  postgres-data:
+  shared-data:
